@@ -5,11 +5,13 @@ namespace TaskQueue
 {
     public class TaskQueueOptions
     {
-        public int MaxThreads { get; set; }
-        public int Interval { get; set; }
         /// <summary>
-        /// TaskData, Exception, ReexecTaskData
+        /// Max concurrent count of running tasks.
         /// </summary>
-        public Func<TaskData, Exception, Task<bool>> OnException { get; set; }
+        public int MaxThreads { get; set; }
+        /// <summary>
+        /// Interval(ms) for starting a new task.
+        /// </summary>
+        public int Interval { get; set; }
     }
 }

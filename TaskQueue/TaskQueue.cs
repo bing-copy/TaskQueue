@@ -14,7 +14,7 @@ namespace TaskQueue
         protected int TotalCount;
         protected int FailureCount;
         public int CurrentThreadCount;
-        public bool Finished { get; set; }
+        public bool Completed { get; set; }
         protected ILogger Logger;
         protected EventId EventId;
 
@@ -46,9 +46,15 @@ namespace TaskQueue
 
         public abstract bool MatchedTaskData(TaskData taskData);
 
+        public abstract bool OnException(TaskData taskData, Exception e);
+
+        /// <summary>
+        /// This method do not care the value of <see cref="Completed"/>.
+        /// </summary>
+        /// <returns></returns>
         public virtual bool CanExecuteData()
         {
-            return !Finished && (Options.MaxThreads == 0 || Options.MaxThreads > CurrentThreadCount);
+            return Options.MaxThreads == 0 || Options.MaxThreads > CurrentThreadCount;
         }
     }
 
@@ -86,17 +92,24 @@ namespace TaskQueue
                     $"An error occured while executing task data: {e.Message}, data: {JsonConvert.SerializeObject(data)}");
                 // Re-execute task data later
                 Interlocked.Increment(ref FailureCount);
-                if (Options.OnException != null)
+                if (OnException(taskData, e))
                 {
-                    var reExecData = await Options.OnException(data, e);
-                    if (reExecData)
-                    {
-                        newTaskData = new List<TaskData> {data};
-                    }
+                    newTaskData = new List<TaskData> { data };
                 }
-
             }
             return newTaskData;
+        }
+
+        /// <summary>
+        /// Exception handling.
+        /// </summary>
+        /// <param name="taskData"></param>
+        /// <param name="e"></param>
+        /// <returns>true to retry, false to give up.</returns>
+        public override bool OnException(TaskData taskData, Exception e)
+        {
+            Logger.LogError(EventId, e, e.Message);
+            return true;
         }
 
         public override bool MatchedTaskData(TaskData taskData)

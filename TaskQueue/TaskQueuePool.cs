@@ -13,6 +13,10 @@ namespace TaskQueue
         private int _currentThreadCount;
         private readonly TaskQueuePoolOptions _options;
         private ConcurrentQueue<TaskData> _queuedTaskData = new ConcurrentQueue<TaskData>();
+        /// <summary>
+        /// Use this variable for avoiding the influence produced by <see cref="_queuedTaskData"/> when concurrency happens.
+        /// </summary>
+        private int _queuedTaskDataCount;
         private TaskQueuePoolStatus _status = TaskQueuePoolStatus.Idle;
         protected ILogger Logger;
         protected EventId EventId;
@@ -48,21 +52,22 @@ namespace TaskQueue
 
         public void Enqueue(TaskData taskData)
         {
+            Interlocked.Increment(ref _queuedTaskDataCount);
             _queuedTaskData.Enqueue(taskData);
         }
         /// <summary>
-        /// 队列停止后，会清空当前所有任务数据，正在运行的任务还会继续运行，但是不会再增加新任务数据
+        /// All task data will be cleared. The running tasks will not be stopped, but the task data produced by them will not be enqueued to the queue.
         /// </summary>
         public virtual void Stop()
         {
             _status = TaskQueuePoolStatus.Idle;
             _queuedTaskData = new ConcurrentQueue<TaskData>();
+            _queuedTaskDataCount = 0;
         }
 
         public virtual async Task Start()
         {
             _status = TaskQueuePoolStatus.Running;
-
             Logger.LogInformation($"Pool [{GetType().Name}] started");
             await Task.Run(_execute);
             Logger.LogInformation($"Pool [{GetType().Name}] stopped");
@@ -70,12 +75,13 @@ namespace TaskQueue
 
         private Task _execute()
         {
-            while (_status == TaskQueuePoolStatus.Running && (_queuedTaskData.Any() || _currentThreadCount > 0))
+            while (_status == TaskQueuePoolStatus.Running && (_queuedTaskDataCount > 0 || _currentThreadCount > 0))
             {
                 if (_options.MaxThreads == 0 || _currentThreadCount < _options.MaxThreads)
                 {
                     if (_queuedTaskData.TryDequeue(out var taskData))
                     {
+                        Interlocked.Decrement(ref _queuedTaskDataCount);
                         var task = this.FirstOrDefault(t => t.CanExecuteData() && t.MatchedTaskData(taskData));
                         if (task != null)
                         {
@@ -85,12 +91,13 @@ namespace TaskQueue
                         }
                         else
                         {
-                            _queuedTaskData.Enqueue(taskData);
+                            Enqueue(taskData);
                         }
                     }
                 }
             }
             _status = TaskQueuePoolStatus.Idle;
+            _queuedTaskDataCount = 0;
             return Task.CompletedTask;
         }
 
@@ -105,7 +112,7 @@ namespace TaskQueue
             {
                 foreach (var d in newTaskData)
                 {
-                    _queuedTaskData.Enqueue(d);
+                    Enqueue(d);
                 }
             }
             Interlocked.Decrement(ref _currentThreadCount);
